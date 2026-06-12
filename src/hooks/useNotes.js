@@ -1,40 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
 
-const WELCOME_CONTENT = `<h2>NoteSpace에 오신 것을 환영합니다</h2><p>에버노트에서 영감을 받은 메모 앱입니다. 아래 기능들을 사용해보세요.</p><h3>주요 기능</h3><ul><li><strong>서식 있는 텍스트</strong> — 굵게, 기울임, 밑줄, 형광펜</li><li><strong>다양한 목록</strong> — 글머리 기호, 번호, 체크리스트</li><li><strong>노트북</strong> — 주제별로 메모를 분류하세요</li><li><strong>태그</strong> — 키워드로 빠르게 찾으세요</li><li><strong>자동 저장</strong> — 입력하는 즉시 저장됩니다</li></ul><blockquote>왼쪽 상단의 새 노트 버튼을 눌러 시작해보세요!</blockquote>`
-
-const DEFAULT_NOTEBOOKS = [
-  { id: 'default', name: '내 노트북', createdAt: new Date().toISOString() }
-]
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+  return res.json()
+}
 
 export function useNotes() {
-  const [notebooks, setNotebooks] = useState(() => {
-    try {
-      const saved = localStorage.getItem('ns_notebooks')
-      return saved ? JSON.parse(saved) : DEFAULT_NOTEBOOKS
-    } catch {
-      return DEFAULT_NOTEBOOKS
-    }
-  })
-
-  const [allNotes, setAllNotes] = useState(() => {
-    try {
-      const saved = localStorage.getItem('ns_notes')
-      if (saved) return JSON.parse(saved)
-      return [{
-        id: crypto.randomUUID(),
-        title: 'NoteSpace에 오신 것을 환영합니다',
-        content: WELCOME_CONTENT,
-        notebookId: 'default',
-        tags: ['시작하기'],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        isTrashed: false,
-        isPinned: false,
-      }]
-    } catch {
-      return []
-    }
-  })
+  const [notebooks, setNotebooks] = useState([])
+  const [allNotes, setAllNotes] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   const [activeNoteId, setActiveNoteId] = useState(null)
   const [activeNotebookId, setActiveNotebookId] = useState(null)
@@ -43,22 +22,31 @@ export function useNotes() {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState('updated')
 
+  // 초기 데이터 로드
   useEffect(() => {
-    localStorage.setItem('ns_notebooks', JSON.stringify(notebooks))
-  }, [notebooks])
+    Promise.all([
+      api('/api/notebooks'),
+      api('/api/notes'),
+    ])
+      .then(([nbs, notes]) => {
+        setNotebooks(nbs)
+        setAllNotes(notes)
+        setLoading(false)
+      })
+      .catch(err => {
+        setError(err.message)
+        setLoading(false)
+      })
+  }, [])
 
-  useEffect(() => {
-    localStorage.setItem('ns_notes', JSON.stringify(allNotes))
-  }, [allNotes])
+  // ─── 필터링 & 정렬 ──────────────────────────────────────────────────────────
 
   const stripHtml = (html) => {
     try {
       const div = document.createElement('div')
       div.innerHTML = html
       return div.textContent || ''
-    } catch {
-      return ''
-    }
+    } catch { return '' }
   }
 
   const filteredNotes = allNotes
@@ -99,80 +87,140 @@ export function useNotes() {
 
   const trashCount = allNotes.filter(n => n.isTrashed).length
 
-  const createNote = useCallback(() => {
+  // ─── Notes CRUD ─────────────────────────────────────────────────────────────
+
+  const createNote = useCallback(async () => {
     const notebookId =
       view === 'notebook' ? activeNotebookId : (notebooks[0]?.id || 'default')
     const noteTags = view === 'tag' && activeTag ? [activeTag] : []
+    const now = new Date().toISOString()
     const newNote = {
       id: crypto.randomUUID(),
       title: '제목 없음',
       content: '',
       notebookId,
       tags: noteTags,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       isTrashed: false,
       isPinned: false,
     }
     setAllNotes(prev => [newNote, ...prev])
     setActiveNoteId(newNote.id)
+    try {
+      await api('/api/notes', { method: 'POST', body: JSON.stringify(newNote) })
+    } catch (err) {
+      console.error('[createNote]', err)
+    }
     return newNote
   }, [view, activeNotebookId, activeTag, notebooks])
 
-  const updateNote = useCallback((id, updates) => {
+  const updateNote = useCallback(async (id, updates) => {
+    const updatedAt = new Date().toISOString()
     setAllNotes(prev =>
       prev.map(note =>
-        note.id === id
-          ? { ...note, ...updates, updatedAt: new Date().toISOString() }
-          : note
+        note.id === id ? { ...note, ...updates, updatedAt } : note
       )
     )
+    try {
+      await api(`/api/notes/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...updates, updatedAt }),
+      })
+    } catch (err) {
+      console.error('[updateNote]', err)
+    }
   }, [])
 
-  const trashNote = useCallback((id) => {
+  const trashNote = useCallback(async (id) => {
     setAllNotes(prev =>
       prev.map(note => (note.id === id ? { ...note, isTrashed: true } : note))
     )
     setActiveNoteId(prev => (prev === id ? null : prev))
+    try {
+      await api(`/api/notes/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ isTrashed: true }),
+      })
+    } catch (err) {
+      console.error('[trashNote]', err)
+    }
   }, [])
 
-  const restoreNote = useCallback((id) => {
+  const restoreNote = useCallback(async (id) => {
     setAllNotes(prev =>
       prev.map(note => (note.id === id ? { ...note, isTrashed: false } : note))
     )
+    try {
+      await api(`/api/notes/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ isTrashed: false }),
+      })
+    } catch (err) {
+      console.error('[restoreNote]', err)
+    }
   }, [])
 
-  const deleteNotePermanently = useCallback((id) => {
+  const deleteNotePermanently = useCallback(async (id) => {
     setAllNotes(prev => prev.filter(note => note.id !== id))
     setActiveNoteId(prev => (prev === id ? null : prev))
+    try {
+      await api(`/api/notes/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      console.error('[deleteNote]', err)
+    }
   }, [])
 
-  const togglePin = useCallback((id) => {
+  const togglePin = useCallback(async (id) => {
+    const note = allNotes.find(n => n.id === id)
+    if (!note) return
+    const isPinned = !note.isPinned
     setAllNotes(prev =>
-      prev.map(note =>
-        note.id === id ? { ...note, isPinned: !note.isPinned } : note
-      )
+      prev.map(n => (n.id === id ? { ...n, isPinned } : n))
     )
-  }, [])
+    try {
+      await api(`/api/notes/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ isPinned }),
+      })
+    } catch (err) {
+      console.error('[togglePin]', err)
+    }
+  }, [allNotes])
 
-  const createNotebook = useCallback((name) => {
+  // ─── Notebooks CRUD ─────────────────────────────────────────────────────────
+
+  const createNotebook = useCallback(async (name) => {
     const newNotebook = {
       id: crypto.randomUUID(),
       name: name.trim(),
       createdAt: new Date().toISOString(),
     }
     setNotebooks(prev => [...prev, newNotebook])
+    try {
+      await api('/api/notebooks', { method: 'POST', body: JSON.stringify(newNotebook) })
+    } catch (err) {
+      console.error('[createNotebook]', err)
+    }
     return newNotebook
   }, [])
 
-  const renameNotebook = useCallback((id, name) => {
+  const renameNotebook = useCallback(async (id, name) => {
     setNotebooks(prev =>
       prev.map(nb => (nb.id === id ? { ...nb, name: name.trim() } : nb))
     )
+    try {
+      await api(`/api/notebooks/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name }),
+      })
+    } catch (err) {
+      console.error('[renameNotebook]', err)
+    }
   }, [])
 
   const deleteNotebook = useCallback(
-    (id) => {
+    async (id) => {
       if (notebooks.length <= 1) return
       const fallbackId = notebooks.find(nb => nb.id !== id)?.id
       setNotebooks(prev => prev.filter(nb => nb.id !== id))
@@ -185,6 +233,11 @@ export function useNotes() {
         setView('all')
         setActiveNotebookId(null)
       }
+      try {
+        await api(`/api/notebooks/${id}`, { method: 'DELETE' })
+      } catch (err) {
+        console.error('[deleteNotebook]', err)
+      }
     },
     [notebooks, view, activeNotebookId]
   )
@@ -193,6 +246,8 @@ export function useNotes() {
     notes: filteredNotes,
     notebooks,
     tags,
+    loading,
+    error,
     activeNote,
     activeNoteId,
     activeNotebookId,
