@@ -5,7 +5,7 @@ let client = null
 export function getDb() {
   if (!client) {
     client = createClient({
-      url: process.env.TURSO_DATABASE_URL,
+      url: (process.env.TURSO_URL || '').replace('libsql://', 'https://'),
       authToken: process.env.TURSO_AUTH_TOKEN,
     })
   }
