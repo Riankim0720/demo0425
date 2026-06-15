@@ -1,10 +1,11 @@
 import 'dotenv/config'
 import express from 'express'
-import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
+import { join } from 'path'
 import { initDb, getDb } from './db.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+// process.cwd() = 프로젝트 루트 (어디서 실행해도 안전)
+const DIST = join(process.cwd(), 'dist')
+
 const app = express()
 app.use(express.json({ limit: '10mb' }))
 
@@ -127,13 +128,15 @@ app.delete('/api/notes/:id', async (req, res) => {
   }
 })
 
-// Static files + SPA fallback (API 라우트보다 뒤에 등록)
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(join(__dirname, '../dist')))
-  app.get('*', (req, res) => {
-    res.sendFile(join(__dirname, '../dist/index.html'))
-  })
-}
+// ─── Static + SPA fallback ─────────────────────────────────────────────────────
+// API 라우트 뒤에 등록, /api 경로는 절대 HTML 반환 안 함
+
+app.use(express.static(DIST))
+
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next()
+  res.sendFile(join(DIST, 'index.html'))
+})
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -162,7 +165,9 @@ const PORT = process.env.PORT || 3001
 async function main() {
   try {
     await initDb()
-    app.listen(PORT, () => console.log(`[server] http://localhost:${PORT}`))
+    app.listen(PORT, () => {
+      console.log(`[server] port=${PORT} dist=${DIST}`)
+    })
   } catch (err) {
     console.error('[server] 시작 실패:', err)
     process.exit(1)
