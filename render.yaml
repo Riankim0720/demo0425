@@ -1,13 +1,16 @@
 services:
   - type: web
     name: notespace
-    env: node
+    env: static
     buildCommand: npm install && npm run build
-    startCommand: npm start
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
-      - key: NODE_ENV
-        value: production
-      - key: TURSO_URL
+      - key: VITE_TURSO_URL
         sync: false
-      - key: TURSO_AUTH_TOKEN
+      - key: VITE_TURSO_AUTH_TOKEN
         sync: false
