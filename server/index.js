@@ -8,10 +8,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
 app.use(express.json({ limit: '10mb' }))
 
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(join(__dirname, '../dist')))
-}
-
 // ─── Notebooks ────────────────────────────────────────────────────────────────
 
 app.get('/api/notebooks', async (req, res) => {
@@ -131,8 +127,9 @@ app.delete('/api/notes/:id', async (req, res) => {
   }
 })
 
-// SPA fallback
+// Static files + SPA fallback (API 라우트보다 뒤에 등록)
 if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(join(__dirname, '../dist')))
   app.get('*', (req, res) => {
     res.sendFile(join(__dirname, '../dist/index.html'))
   })
